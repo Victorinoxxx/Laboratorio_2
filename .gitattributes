@@ -1,2 +1,178 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+//----------------------------------------------------------------------------- 
+// Universidad del valle de Guatemala
+// IE2023 Programaciónn de Microcontroladores
+// Autor: Victor Vanegas
+// Proyecto: Laboratorio_2.asm
+// Descripción: Contador con display 7 segmentos
+// Hardware: ATMega328P 
+// Created: 5/02/2024 22:34:59
+//-----------------------------------------------------------------------------
+// Encabezado
+//-----------------------------------------------------------------------------
+.include "M328PDEF.inc"
+
+.cseg
+.org 0x00
+//-----------------------------------------------------------------------------
+// Configuracion de la pila
+//-----------------------------------------------------------------------------
+	LDI R16, LOW(RAMEND) 
+	OUT SPL, R16
+	LDI R17, HIGH(RAMEND) 
+	OUT SPH, R17
+//-----------------------------------------------------------------------------
+// CONFIGURACIÓN
+//-----------------------------------------------------------------------------
+
+LDI R18, 0x00
+
+SETUP:
+
+	LDI R16, (1 << CLKPCE) // CLKPCE = 7, corremos 7 veces el 1 en el registro R16
+	STS CLKPR, R16
+	
+	LDI R16, 0b0000_0100
+	STS CLKPR, R16		   // Definiendo un prescaler de 16 fcpu = 1MHz
+
+	LDI R16, 0x00
+	OUT PORTD, R16				// Para poder usar los puerto RX y TX
+	STS UCSR0B, R16
+	
+	//Entradas
+	LDI R16, 0b0000_0011
+	OUT PORTB, R16				// Pull up en los botones
+	LDI R16, 0b0000_0011
+	OUT DDRB, R16				// Asignamos que son entrada
+	//Salidas
+	LDI R16, 0b1111_1111
+	OUT DDRD, R16				// Asignamos que son salida
+	LDI R16, 0b0011_1111
+	OUT DDRC, R16				// Asignamos que son salida
+
+	CALL Init_T0
+
+//-----------------------------------------------------------------------------
+// Tabla  de valores
+//-----------------------------------------------------------------------------v
+	
+	TABLA7SEG:  .DB 0b0100_0000, 0b0111_1001, 0b0010_0100, 0b0011_0000, 0b0001_1001, 0b0001_0010, 0b0000_0010, 0b0111_1000, 0b0000_0000, 0b0001_1000, 0b0000_1000, 0b0000_0011, 0b0100_0110, 0b0010_0001, 0b0000_0110, 0b0000_1110
+
+//-----------------------------------------------------------------------------
+// LOOP
+//-----------------------------------------------------------------------------
+
+	LDI R17, 0
+	LDI ZH, HIGH(TABLA7SEG << 1)        // Asigna el valor bit mas significativo a la tabla
+	LDI ZL, LOW(TABLA7SEG << 1)			// Asigna el valor bit menos significativo a la tabla
+	ADD ZL, R17							// Hace la suma de Z mas R17
+	LPM R16, Z							// El resultado de la suma, saca el registro de la tabla
+	OUT PORTD, R16						// Lo manda al display
+
+LOOP:
+	IN R16, PINB
+	SBRS R16, PB0 // Compara si el bit con el puerto PB0 esta en 1,  va a INCREMENTO
+	RJMP INCREMENTO
+	SBRS R16, PB1 // Compara si el bit con el puerto PB1 esta en 1,  va a DECREMENTAR
+	RJMP DECREMENTO
+	CALL CONT		// Contador
+	RJMP LOOP
+
+INCREMENTO:
+	
+	LDI R16, 100 // Anti rebote
+	LOOP_INC:
+		DEC R16
+		BRNE LOOP_INC
+		CALL CONT
+		SBIS PINB, PB0		// Lee nuevamente el pin, salta si el bit PB0 esta en 1
+		RJMP INCREMENTO
+	CPI R17, 15				// Compara si el contador ya llego al limite
+	BREQ LOOP
+	INC R17
+	LDI ZH, HIGH(TABLA7SEG << 1)
+	LDI ZL, LOW(TABLA7SEG << 1)
+	ADD ZL, R17
+	LPM R16, Z
+	OUT PORTD, R16
+	RJMP LOOP
+
+DECREMENTO:
+	
+	LDI R16, 100 // Anti rebote
+	LOOP_DEC:
+		DEC R16
+		BRNE LOOP_DEC
+		CALL CONT
+		SBIS PINB, PB1		// Lee nuevamente el pin, salta si el bit PB1 esta en 1
+		RJMP DECREMENTO
+	CPI R17, 0				// Compara si el contador ya llego al limite
+	BREQ LOOP
+	DEC R17
+	LDI ZH, HIGH(TABLA7SEG << 1)	
+	LDI ZL, LOW(TABLA7SEG << 1)
+	ADD ZL, R17
+	LPM R16, Z
+	OUT PORTD, R16
+	RJMP LOOP
+
+CONT:
+	// Reloj
+	IN R16, TIFR0
+	CPI R16, (1<<TOV0)
+	BRNE CONT
+
+	LDI R16, 240
+	OUT TCNT0, R16
+
+	SBI TIFR0, TOV0
+
+	INC R20
+	CPI R20, 40
+	BRNE CONT
+
+	CLR R20		
+
+	INC R18			// Le suma 1 al R18
+	CPI R18, 17		// Compara si R18 es igual a 17
+	BREQ RESET		// De ser verdad, resetea
+	LDI R16, 1
+	ADD R16, R17	// Suma R16 y R17
+	CP R18, R16		// Hace una comparación de igualdad
+	BRNE COMPV		// Si la comparación anterior es falsa va a COMPV
+	CLR R18
+	OUT PORTC, R18
+	CALL ALARMA
+	RET
+
+RESET: 
+	
+	CLR R18
+
+COMPV:
+
+	OUT PORTC, R18	
+	RET
+
+ALARMA:
+	
+	LDI R19, 0b0111_1111	// Colocamos led el "alarma" como entrada, para que podamos leer su estado
+	OUT DDRD, R19
+	IN R16, PIND
+	LDI R19, (1 << PD7)		// Movemos un 1, 7 casillas a la izquierda
+	EOR R16, R19			// Hacemos un XOR, con R19, si el octavo bit esta en 0, pasa a 1 y viceversa
+	LDI R19, 0b1111_1111	// Colocamos el led "alarma" como salida, para que podamos cambiar su estado
+	OUT DDRD, R19
+	OUT PORTD, R16			// Lo sacamos al puerto D
+	RET
+
+//-----------------------------------------------------------------------------
+// Subrutina para inicializar TIMER0
+//-----------------------------------------------------------------------------
+
+Init_T0:
+	LDI R16, (1 << CS02) | (1 << CS00)		// Configura el prescales a 1024
+	OUT TCCR0B, R16
+
+	LDI R16, 100								// Carga el valor de desbordamiento
+	OUT TCNT0, R16							// Carga el valor inicial del contador
+	RET
